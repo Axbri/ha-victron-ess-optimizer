@@ -4,17 +4,21 @@
 
 ## Method
 
-- **Dynamic programming** over battery energy (`ess_battery_capacity`), 0.2 kWh grid with linear interpolation. Each quarter also offers the exact self-consumption move, so small night loads are followed exactly. The forward pass follows the continuous SoC.
-- **Horizon**: current quarter → last published price (midnight, or tomorrow midnight after ~13:00). Quarters are keyed by UTC, so the repeated autumn DST hour is kept.
-- **Objective**: import cost − export revenue + wear (`ess_wear_cost` per kWh discharged) + terminal value.
-- **Limits**: `ess_max_import`, `ess_max_grid_charge`, `ess_max_export`; grid charging only below `ess_max_soc_grid_charge` and if `ess_allow_grid_charge`.
+* **Dynamic programming** over battery energy (`ess_battery_capacity`), 0.2 kWh grid with linear interpolation. Each quarter also offers the exact self-consumption move, so small night loads are followed exactly. The forward pass follows the continuous SoC.
+
+* **Horizon**: current quarter → last published price (midnight, or tomorrow midnight after \~13:00). Quarters are keyed by UTC, so the repeated autumn DST hour is kept.
+
+* **Objective**: import cost − export revenue + wear (`ess_wear_cost` per kWh discharged) + terminal value.
+
+* **Limits**: `ess_max_import`, `ess_max_grid_charge`, `ess_max_export`; grid charging only below `ess_max_soc_grid_charge` and if `ess_allow_grid_charge`.
 
 ## Efficiency
 
 `ess_measured_efficiency`:
 
-- **On (measured, power-dependent)**: curves fitted on 5-minute night data of the author's 3-phase Multi (~12 kW): inverter AC = 0.9953·DC − 0.0725 kW (≈ 80 % at 0.25 kW, 97 % above 2.5 kW); charger DC = 0.9452·AC − 0.0060·AC² − 0.0581 kW (≈ 90 % at 2–5 kW); battery 96 % round trip; idle 45 W. Each DP step uses the exact power of the move, so the plan prefers moderate charge power (2–4 kW instead of 9 kW bursts) and avoids low-power battery use that gains nothing. Night SoC validation RMSE 2.8 % vs 4.1 % for the constant model. **Refit for your hardware** (`Params` in `ess_dp.py`) or use the constant model.
-- **Off (constant)**: `ess_round_trip_efficiency` split evenly + `ess_standby_loss` added to the load.
+* **On (measured, power-dependent)**: curves fitted on 5-minute night data of the author's 3-phase Multi (~12 kW): inverter AC = 0.9953·DC − 0.0725 kW (≈ 80 % at 0.25 kW, 97 % above 2.5 kW); charger DC = 0.9452·AC − 0.0060·AC² − 0.0581 kW (≈ 90 % at 2–5 kW); battery 96 % round trip; idle 45 W. Each DP step uses the exact power of the move, so the plan prefers moderate charge power (2–4 kW instead of 9 kW bursts) and avoids low-power battery use that gains nothing. Night SoC validation RMSE 2.8 % vs 4.1 % for the constant model. **Refit for your hardware** (`Params` in `ess_dp.py`) or use the constant model.
+
+* **Off (constant)**: `ess_round_trip_efficiency` split evenly + `ess_standby_loss` added to the load.
 
 Where selling is not allowed, a PV surplus must be stored as far as plain self-consumption would store it (no deliberate PV export).
 
@@ -40,13 +44,15 @@ Outside allowed quarters the battery never exports. PV surplus with a full batte
 
 ## SoC sync (full charge)
 
-When the time since the last full charge ≥ `ess_full_charge_interval` days, or `ess_force_full_charge` is on, 100 % is required by the next 06:00 (5 SEK/kWh shortfall penalty). The target is kept by every re-plan until 06:00; if missed and tomorrow's 06:00 is not yet in the horizon, the horizon end becomes the target. Costs ~5–8 SEK in winter. Keeps the shunt's SoC calibrated and the LiFePO4 cells balanced.
+When the time since the last full charge ≥ `ess_full_charge_interval` days, or `ess_force_full_charge` is on, 100 % is required by the next 06:00 (5 SEK/kWh shortfall penalty). The target is kept by every re-plan until 06:00; if missed and tomorrow's 06:00 is not yet in the horizon, the horizon end becomes the target. Costs \~5–8 SEK in winter. Keeps the shunt's SoC calibrated and the LiFePO4 cells balanced.
 
 ## EV in the plan (smart control only)
 
-- The marginal energy cost per quarter selects the cheapest quarters before the deadline (departure − `ess_ev_finish_margin`) for the energy needed. Two rounds.
-- Opportunistic charging up to `ess_ev_opportunistic_target` where the marginal cost ≤ `ess_ev_opportunistic_max_price` (e.g. PV surplus).
-- Each charge start costs `EV_START_COST` (0.15 SEK) in the selection, so near-equal quarters form 1–2 blocks instead of many short charges.
+* The marginal energy cost per quarter selects the cheapest quarters before the deadline (departure − `ess_ev_finish_margin`) for the energy needed. Two rounds.
+
+* Opportunistic charging up to `ess_ev_opportunistic_target` where the marginal cost ≤ `ess_ev_opportunistic_max_price` (e.g. PV surplus).
+
+* Each charge start costs `EV_START_COST` (0.15 SEK) in the selection, so near-equal quarters form 1–2 blocks instead of many short charges.
 
 ## `sensor.ess_plan`
 
