@@ -1,0 +1,176 @@
+# ESS automations. Paste into automations.yaml (or the automation editor in YAML mode).
+# Replace person.owner and notify.mobile_app_your_phone with your own entities.
+- id: '1791000000001'
+  alias: ESS executor watchdog
+  description: If the Pyscript ESS executor stops updating sensor.ess_executor for 2 minutes, notify and put the Victron back
+    into plain self-consumption (setpoint 0, normal min SoC, no charge-current limit). See docs/safety.md.
+  triggers:
+  - trigger: template
+    value_template: '{% set u = state_attr(''sensor.ess_executor'', ''updated'') %} {{ u is none or (now() - as_datetime(u)).total_seconds()
+      > 60 }}'
+    for: 00:02:00
+  conditions:
+  - condition: template
+    value_template: '{{ states(''input_select.ess_mode'') != ''Victron default'' }}'
+  actions:
+  - action: number.set_value
+    target:
+      entity_id: number.victron_settings_ess_acpowersetpoint
+    data:
+      value: 0
+  - action: number.set_value
+    target:
+      entity_id: number.victron_settings_ess_batterylife_minimumsoc
+    data:
+      value: '{{ states(''input_number.ess_min_soc'') | float(8) }}'
+  - action: number.set_value
+    target:
+      entity_id: number.victron_settings_ess_maxchargecurrent
+    data:
+      value: -1
+  - action: notify.mobile_app_your_phone
+    data:
+      title: ⚠️ ESS executor stopped
+      message: The ESS executor has not updated for 2 minutes. The Victron was set to plain self-consumption.
+  mode: single
+- id: '1791000000002'
+  alias: ESS guest mode off when the car is plugged in at home
+  description: Turns off guest charging when the owner is home and the car is plugged into the home charger, so the car
+    is never charged or counted as a guest car. Also triggers on arriving home, because the phone often reports 'home' a few
+    minutes after the car is plugged in. See docs/ev-charging.md.
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.ev_plugged_in
+    to: 'on'
+  - trigger: state
+    entity_id: person.owner
+    to: home
+  - trigger: state
+    entity_id: sensor.victronevcharger_status40
+    not_to:
+    - DISCONNECTED
+    - unavailable
+    - unknown
+  conditions:
+  - condition: state
+    entity_id: input_boolean.ess_ev_guest_mode
+    state: 'on'
+  - condition: state
+    entity_id: person.owner
+    state: home
+  - condition: state
+    entity_id: binary_sensor.ev_plugged_in
+    state: 'on'
+  - condition: template
+    value_template: '{{ states(''sensor.victronevcharger_status40'') not in [''DISCONNECTED'', ''unavailable'', ''unknown'']
+      }}'
+  actions:
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.ess_ev_guest_mode
+  - action: notify.mobile_app_your_phone
+    data:
+      title: 🔌 Guest mode turned off
+      message: Your car was plugged into the home charger, so guest charging was switched off.
+  mode: single
+- id: '1791000000003'
+  alias: ESS guest mode on while away
+  description: Keeps guest charging on whenever the owner is away, so anyone charging at home is charged from the grid and
+    counted as a guest. Re-arms after a guest session ends (car unplugged) while still away. Never while the car is plugged
+    into the home charger. Turned off by 'ESS guest mode off when the car is plugged in at home'. See docs/ev-charging.md.
+  triggers:
+  - trigger: state
+    entity_id: person.owner
+    from: home
+  - trigger: state
+    entity_id: input_boolean.ess_ev_guest_mode
+    to: 'off'
+    for: 00:00:30
+  - trigger: homeassistant
+    event: start
+  conditions:
+  - condition: not
+    conditions:
+    - condition: state
+      entity_id: person.owner
+      state: home
+  - condition: state
+    entity_id: input_boolean.ess_ev_guest_mode
+    state: 'off'
+  - condition: not
+    conditions:
+    - condition: and
+      conditions:
+      - condition: state
+        entity_id: binary_sensor.ev_plugged_in
+        state: 'on'
+      - condition: template
+        value_template: '{{ states(''sensor.victronevcharger_status40'') not in [''DISCONNECTED'', ''unavailable'', ''unknown'']
+          }}'
+  actions:
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.ess_ev_guest_mode
+  mode: single
+- id: '1791000000004'
+  alias: ESS Pyscript keepalive
+  description: Pyscript time triggers freeze for the repeated autumn DST hour (2026-10-25). HA time patterns do not, so this
+    nudges the ESS executor when its 10 s loop has stalled and the optimizer when no plan is fresh. See docs/safety.md.
+  triggers:
+  - trigger: time_pattern
+    seconds: /20
+  conditions:
+  - condition: template
+    value_template: '{{ states(''input_select.ess_mode'') != ''Victron default'' }}'
+  actions:
+  - if:
+    - condition: template
+      value_template: '{% set u = state_attr(''sensor.ess_executor'', ''updated'') %}{{ u is not none and (now() - as_datetime(u)).total_seconds()
+        > 30 }}'
+    then:
+    - action: pyscript.ess_executor_keepalive
+      data: {}
+  - if:
+    - condition: template
+      value_template: '{% set c = state_attr(''sensor.ess_plan'', ''computed_at'') %}{{ c is not none and (now() - as_datetime(c)).total_seconds()
+        > 1200 }}'
+    then:
+    - action: pyscript.ess_optimize
+      data: {}
+  mode: single
+- id: '1791000000011'
+  alias: EV climate off after workday departure
+  description: 'Stops the car''s extended climate when leaving home on a workday morning, so it does not restart after the
+    car is parked at work. Retries up to 5 times. Optional: only for cars whose climate can be controlled from HA.'
+  triggers:
+  - trigger: state
+    entity_id: person.owner
+    from: home
+    to: not_home
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.workday_sensor
+    state: 'on'
+  - condition: time
+    after: 05:00:00
+    before: '10:00:00'
+  - condition: state
+    entity_id: binary_sensor.ev_plugged_in
+    state: 'off'
+  - condition: state
+    entity_id: binary_sensor.ev_climate_active
+    state: 'on'
+  actions:
+  - repeat:
+      sequence:
+      - wait_template: '{{ states(''button.ev_climate_stop'') != ''unavailable'' }}'
+        timeout: 00:02:00
+      - action: button.press
+        target:
+          entity_id: button.ev_climate_stop
+      - wait_template: '{{ is_state(''binary_sensor.ev_climate_active'', ''off'') }}'
+        timeout: 00:01:00
+      until:
+      - condition: template
+        value_template: '{{ is_state(''binary_sensor.ev_climate_active'', ''off'') or repeat.index >= 5 }}'
+  mode: single

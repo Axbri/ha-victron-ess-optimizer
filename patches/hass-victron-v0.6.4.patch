@@ -1,0 +1,76 @@
+--- a/custom_components/victron/number.py
++++ b/custom_components/victron/number.py
+@@ -225,11 +225,18 @@
+ 
+         self.data_key = str(self.description.slave) + "." + str(self.description.key)
+ 
+-        self._attr_native_value = self.description.value_fn(
+-            self.coordinator.processed_data(),
+-            self.description.slave,
+-            self.description.key,
+-        )
++        # A slave that has not answered on Modbus yet (e.g. PV inverter asleep at night,
++        # EV charger offline) has no entry in the coordinator data. Without this guard the
++        # KeyError aborts the whole number platform and no number entity gets created.
++        try:
++            self._attr_native_value = self.description.value_fn(
++                self.coordinator.processed_data(),
++                self.description.slave,
++                self.description.key,
++            )
++        except (KeyError, TypeError, IndexError):
++            _LOGGER.debug("no initial value for %s", self.data_key)
++            self._attr_native_value = None
+ 
+         self._attr_unique_id = f"{self.description.slave}_{self.description.key}"
+         if self.description.slave not in (100, 225):
+@@ -243,7 +250,8 @@
+         """Update the current value."""
+         # TODO convert float to int again with scale respected
+         if value < 0:
+-            value = UINT16_MAX + value
++            # two's complement is 65536 + v (upstream used 65535, so -1 became -2).
++            value = UINT16_MAX + 1 + value
+         self.coordinator.write_register(
+             unit=self.description.slave,
+             address=self.description.address,
+@@ -258,15 +266,18 @@
+     @property
+     def native_value(self) -> float:
+         """Return the state of the entity."""
+-        value = self.description.value_fn(
+-            data=self.coordinator.processed_data(),
+-            slave=self.description.slave,
+-            key=self.description.key,
+-        )
++        try:
++            value = self.description.value_fn(
++                data=self.coordinator.processed_data(),
++                slave=self.description.slave,
++                key=self.description.key,
++            )
++        except (KeyError, TypeError, IndexError):
++            return None
+         if value > round(
+             UINT16_MAX / 2
+         ):  # Half of the UINT16 is reserved for positive and half for negative values
+-            value = value - UINT16_MAX
++            value = value - (UINT16_MAX + 1)  # see async_set_native_value
+         return value
+ 
+     @property
+--- a/custom_components/victron/const.py
++++ b/custom_components/victron/const.py
+@@ -725,7 +725,11 @@
+         230, UINT16, 1, entityType=ButtonWriteType()
+     ),
+     "vebus_microgrid_error": RegisterInfo(
+-        231, UINT16, TextReadEntityType(microgrid_error)
++        # upstream passes the entity type positionally, so it lands in
++        # `unit` and the sensor gets a Python object as unit_of_measurement. That
++        # breaks JSON serialization of its state, recorder statistics and saving
++        # of the HA entity registry.
++        231, UINT16, entityType=TextReadEntityType(microgrid_error)
+     ),
+ }
+ 

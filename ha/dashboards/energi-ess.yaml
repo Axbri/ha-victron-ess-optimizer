@@ -1,0 +1,1121 @@
+# Lovelace dashboard (raw config). Create a new dashboard, open the raw configuration editor and paste.
+# Needs HACS cards: apexcharts-card.
+title: Energi
+views:
+- title: Overview
+  path: overview
+  icon: mdi:home-battery
+  type: sections
+  max_columns: 3
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Battery control
+    - type: markdown
+      content: '{% set e = ''sensor.ess_executor'' %}
+
+        **Mode:** {{ states(''input_select.ess_mode'') }} → **{{ states(e) }}**
+
+        {{ state_attr(e, ''reason'') }}
+
+        {% if state_attr(e, ''override_until'') %}Override until {{ state_attr(e, ''override_until'')[:16] }}{% endif %}
+
+
+        Setpoint target {{ state_attr(e, ''setpoint_target_w'') }} W · ESS min SoC {{ state_attr(e, ''min_soc_target'') }}
+        % · solar export {{ ''on'' if state_attr(e, ''solar_export'') else ''off'' }}{% if state_attr(e, ''ev_from_grid'')
+        %} · EV from grid{% endif %}'
+    - type: tile
+      entity: sensor.victron_battery_soc_223
+      name: Battery SoC
+    - type: tile
+      entity: sensor.victron_system_battery_power
+      name: Battery power
+    - type: tile
+      entity: sensor.grid_power
+      name: Grid (P1)
+    - type: tile
+      entity: sensor.pv_power
+      name: Solar
+    - type: tile
+      entity: sensor.pv_energy_today
+      name: Solar today
+    - type: tile
+      entity: sensor.victron_total_ac_out_consumption
+      name: House load
+    - type: tile
+      entity: sensor.ess_import_price
+      name: Import price
+    - type: tile
+      entity: sensor.ess_export_price
+      name: Export price
+  - type: grid
+    cards:
+    - type: heading
+      heading: Quick controls
+    - type: entities
+      entities:
+      - input_select.ess_mode
+      - input_datetime.ess_override_until
+      - input_number.ess_override_hours
+      - input_number.ess_manual_power
+      - input_number.ess_manual_export_floor
+      - input_number.ess_max_soc_grid_charge
+      - type: divider
+      - input_boolean.ess_allow_grid_charge
+      - input_boolean.ess_allow_battery_export
+      - input_number.ess_sell_min_pv_today
+      - input_number.ess_sell_spike_price
+      - input_boolean.ess_allow_solar_export
+      - input_boolean.ess_block_export_negative_price
+      - input_boolean.ess_allow_battery_to_ev
+      - input_boolean.ess_force_full_charge
+  - type: grid
+    cards:
+    - type: heading
+      heading: EV (EV)
+    - type: markdown
+      content: '{% set e = ''sensor.ess_ev'' %}{% set d = state_attr(e, ''next_departure'') %}{% set ls = state_attr(e, ''latest_start'')
+        %}
+
+        **{{ states(e) }}** ({{ state_attr(e, ''mode'') }}) · {{ ''home'' if state_attr(e, ''at_home'') else ''away'' }}{%
+        if state_attr(e, ''charging'') %} · charging {{ state_attr(e, ''power_w'') }} W{% endif %}
+
+        EV {{ state_attr(e, ''soc'') }} % → target {{ state_attr(e, ''target'') | int(0) }} % ({{ state_attr(e, ''season'')
+        }}{% if state_attr(e, ''temperature'') is number %}, {{ state_attr(e, ''temperature'') | round(1) }} °C at departure
+        ({{ state_attr(e, ''temperature_source'') }}){% endif %})
+
+        Next departure: {{ as_timestamp(d) | timestamp_custom(''%a %d/%m %H:%M'') if d else ''–'' }}{% if state_attr(e, ''needed_kwh'')
+        %} · needs {{ state_attr(e, ''needed_kwh'') }} kWh · latest start {{ as_timestamp(ls) | timestamp_custom(''%a %H:%M'')
+        if ls else ''–'' }}{% endif %}
+
+        {% if state_attr(e, ''preheat'') %}{{ state_attr(e, ''preheat'') }}{% endif %}
+
+        {% if state_attr(e, ''guard_active'') %}⚠️ Deadline guard active{% endif %}'
+    - type: custom:apexcharts-card
+      graph_span: 20h
+      span:
+        start: hour
+        offset: -1h
+      now:
+        show: true
+        label: Now
+      header:
+        show: false
+      apex_config:
+        chart:
+          height: 280
+        legend:
+          show: true
+      yaxis:
+      - id: soc
+        min: 0
+        max: 100
+        decimals: 0
+        apex_config:
+          title:
+            text: EV SoC %
+      - id: kw
+        opposite: true
+        min: 0
+        decimals: 1
+        apex_config:
+          title:
+            text: kW
+      series:
+      - entity: sensor.ess_plan
+        name: Planned EV SoC
+        type: line
+        yaxis_id: soc
+        data_generator: "const t0 = new Date(entity.attributes.start).getTime();\nconst ev = hass.states['sensor.ess_ev'].attributes;\n\
+          let s = Number(ev.soc);\nif (!ev.at_home || isNaN(s)) return [];\nconst kpp = ev.kwh_per_percent || 0.25;\nconst\
+          \ dep = ev.next_departure ? new Date(ev.next_departure).getTime() : Infinity;\nconst now = Date.now();\nconst kw\
+          \ = entity.attributes.ev_kw || [];\nconst k0 = Math.max(0, Math.floor((now - t0) / 900000));\nconst out = [[now,\
+          \ s]];\nfor (let i = k0; i < kw.length; i++) {\n  const t = t0 + (i + 1) * 900000;\n  if (t > dep) break;\n  const\
+          \ frac = i === k0 ? (t - now) / 900000 : 1;\n  s = Math.min(100, s + kw[i] * 0.25 * frac / kpp);\n  out.push([t,\
+          \ Math.round(s * 10) / 10]);\n}\nreturn out;"
+        stroke_width: 3
+        extend_to: false
+        color: '#1e88e5'
+      - entity: sensor.ess_ev
+        name: Target by departure
+        type: line
+        yaxis_id: soc
+        data_generator: 'const a = entity.attributes;
+
+          if (!a.at_home || !a.next_departure || !a.target) return [];
+
+          return [[Date.now(), a.target], [new Date(a.next_departure).getTime(), a.target]];'
+        stroke_width: 1
+        curve: stepline
+        extend_to: false
+        color: '#78909c'
+      - entity: sensor.ess_plan
+        name: From grid
+        type: area
+        curve: stepline
+        yaxis_id: kw
+        color: '#f6b9b8'
+        opacity: 1
+        stroke_width: 0
+        extend_to: false
+        show:
+          legend_value: false
+        data_generator: "const a = entity.attributes;\nconst t0 = new Date(a.start).getTime();\nconst pv = a.pv_kw || [],\
+          \ ld = a.load_kw || [], bt = a.batt_kw || [];\nreturn (a.ev_kw || []).map((ev, i) => {\n  const sol = Math.min(ev,\
+          \ Math.max(0, (pv[i] || 0) - (ld[i] || 0)));\n  const bat = Math.min(ev - sol, Math.max(0, -(bt[i] || 0) - Math.max(0,\
+          \ (ld[i] || 0) - (pv[i] || 0))));\n  return [t0 + i * 900000, Math.round((ev) * 100) / 100];\n});"
+      - entity: sensor.ess_plan
+        name: From battery
+        type: area
+        curve: stepline
+        yaxis_id: kw
+        color: '#bfe3c0'
+        opacity: 1
+        stroke_width: 0
+        extend_to: false
+        show:
+          legend_value: false
+        data_generator: "const a = entity.attributes;\nconst t0 = new Date(a.start).getTime();\nconst pv = a.pv_kw || [],\
+          \ ld = a.load_kw || [], bt = a.batt_kw || [];\nreturn (a.ev_kw || []).map((ev, i) => {\n  const sol = Math.min(ev,\
+          \ Math.max(0, (pv[i] || 0) - (ld[i] || 0)));\n  const bat = Math.min(ev - sol, Math.max(0, -(bt[i] || 0) - Math.max(0,\
+          \ (ld[i] || 0) - (pv[i] || 0))));\n  return [t0 + i * 900000, Math.round((sol + bat) * 100) / 100];\n});"
+      - entity: sensor.ess_plan
+        name: From solar
+        type: area
+        curve: stepline
+        yaxis_id: kw
+        color: '#ffe8a3'
+        opacity: 1
+        stroke_width: 0
+        extend_to: false
+        show:
+          legend_value: false
+        data_generator: "const a = entity.attributes;\nconst t0 = new Date(a.start).getTime();\nconst pv = a.pv_kw || [],\
+          \ ld = a.load_kw || [], bt = a.batt_kw || [];\nreturn (a.ev_kw || []).map((ev, i) => {\n  const sol = Math.min(ev,\
+          \ Math.max(0, (pv[i] || 0) - (ld[i] || 0)));\n  const bat = Math.min(ev - sol, Math.max(0, -(bt[i] || 0) - Math.max(0,\
+          \ (ld[i] || 0) - (pv[i] || 0))));\n  return [t0 + i * 900000, Math.round((sol) * 100) / 100];\n});"
+    - type: entities
+      entities:
+      - input_boolean.ess_ev_smart_control
+      - input_boolean.ess_ev_preheat
+      - input_select.ess_ev_mode
+      - input_select.ess_ev_next_departure
+      - input_datetime.ess_ev_departure
+      - input_select.ess_ev_season
+      - sensor.ev_soc
+      - sensor.victronevcharger_status40
+      - sensor.victronevcharger_total_power40
+      - binary_sensor.workday_sensor
+  - type: grid
+    column_span: 3
+    cards:
+    - type: heading
+      heading: Optimizer plan
+    - type: markdown
+      content: '{% set p = ''sensor.ess_plan'' %}{% set names = {''SELF'':''Self-consumption'',''HOLD'':''Hold'',''CHARGE'':''Grid
+        charge'',''EXPORT'':''Sell'',''SOLAR_EXPORT'':''Sell PV, battery idle''} %}
+
+        **Plan now: {{ names.get(states(p), states(p)) }}**{% if not is_state(''input_select.ess_mode'', ''Auto'') %} (not
+        executed: mode is {{ states(''input_select.ess_mode'') }}){% endif %}
+
+        {% if state_attr(p, ''setpoint_w'') %}Would set grid setpoint {{ state_attr(p, ''setpoint_w'') }} W, floor {{ state_attr(p,
+        ''floor_now'') }} %{% endif %}
+
+        Horizon to {{ (state_attr(p, ''horizon_end'') or '''')[:16] | replace(''T'', '' '') }} · cost {{ state_attr(p, ''cost'')
+        }} SEK vs self-consumption {{ state_attr(p, ''baseline_cost'') }} SEK → **saves {{ state_attr(p, ''savings'') }} SEK**
+
+        {% for s in state_attr(p, ''summary'') or [] %}
+
+        - {{ s }}{% endfor %}
+
+        {% if state_attr(p, ''selling_note'') %}🚫 Selling paused: {{ state_attr(p, ''selling_note'') }}
+
+        {% endif %}{% if state_attr(p, ''full_charge_due'') %}🔋 Full charge (SoC sync) due{% endif %}{% if state_attr(p, ''ev_need_kwh'')
+        %}
+
+        EV: needs {{ state_attr(p, ''ev_need_kwh'') }} kWh, planned {{ state_attr(p, ''ev_planned_kwh'') }} kWh{% if not state_attr(p,
+        ''ev_feasible'') %} ⚠️ not feasible before departure{% endif %}{% endif %}
+
+        <sub>Computed {{ (state_attr(p, ''computed_at'') or '''')[11:16] }} in {{ state_attr(p, ''runtime_s'') }} s</sub>'
+    - type: custom:apexcharts-card
+      graph_span: 36h
+      span:
+        start: hour
+        offset: -3h
+      now:
+        show: true
+        label: Now
+      header:
+        show: false
+      apex_config:
+        chart:
+          height: 320
+        legend:
+          show: true
+      yaxis:
+      - id: soc
+        min: 0
+        max: 100
+        decimals: 0
+        apex_config:
+          title:
+            text: SoC %
+      - id: kw
+        opposite: true
+        decimals: 1
+        apex_config:
+          title:
+            text: kW
+      series:
+      - entity: sensor.ess_plan
+        name: Planned SoC
+        type: line
+        yaxis_id: soc
+        data_generator: 'const t0 = new Date(entity.attributes.start).getTime();
+
+          return (entity.attributes.soc || []).map((v, i) => [t0 + i * 900000, v * 1]);'
+        stroke_width: 3
+      - entity: sensor.ess_plan
+        name: Export floor
+        type: line
+        yaxis_id: soc
+        data_generator: 'const t0 = new Date(entity.attributes.start).getTime();
+
+          return (entity.attributes.floor || []).map((v, i) => [t0 + i * 900000, v * 1]);'
+        stroke_width: 1
+        curve: stepline
+      - entity: sensor.victron_battery_soc_223
+        name: Actual SoC
+        type: line
+        yaxis_id: soc
+        group_by:
+          func: avg
+          duration: 15min
+        stroke_width: 2
+        extend_to: now
+      - entity: sensor.ess_plan
+        name: Planned grid
+        type: column
+        yaxis_id: kw
+        data_generator: 'const t0 = new Date(entity.attributes.start).getTime();
+
+          return (entity.attributes.grid_kw || []).map((v, i) => [t0 + i * 900000, v * 1]);'
+        opacity: 0.5
+      - entity: sensor.ess_plan
+        name: Planned EV
+        type: column
+        yaxis_id: kw
+        data_generator: 'const t0 = new Date(entity.attributes.start).getTime();
+
+          return (entity.attributes.ev_kw || []).map((v, i) => [t0 + i * 900000, v * 1]);'
+        opacity: 0.5
+  - type: grid
+    column_span: 3
+    cards:
+    - type: heading
+      heading: Prices and battery (today + tomorrow)
+    - type: custom:apexcharts-card
+      graph_span: 48h
+      span:
+        start: day
+      now:
+        show: true
+        label: Now
+      header:
+        show: false
+      apex_config:
+        chart:
+          height: 320
+        legend:
+          show: true
+      yaxis:
+      - id: price
+        decimals: 2
+        apex_config:
+          title:
+            text: SEK/kWh
+      - id: soc
+        opposite: true
+        min: 0
+        max: 100
+        decimals: 0
+        apex_config:
+          title:
+            text: SoC %
+      series:
+      - entity: sensor.ess_import_price
+        name: Import
+        type: line
+        curve: stepline
+        yaxis_id: price
+        data_generator: 'const t0 = new Date(); t0.setHours(0,0,0,0);
+
+          const v = [...(entity.attributes.today || []), ...(entity.attributes.tomorrow || [])];
+
+          return v.map((p, i) => [t0.getTime() + i * 900000, p]);'
+        stroke_width: 2
+      - entity: sensor.ess_export_price
+        name: Export
+        type: line
+        curve: stepline
+        yaxis_id: price
+        data_generator: 'const t0 = new Date(); t0.setHours(0,0,0,0);
+
+          const v = [...(entity.attributes.today || []), ...(entity.attributes.tomorrow || [])];
+
+          return v.map((p, i) => [t0.getTime() + i * 900000, p]);'
+        stroke_width: 2
+      - entity: sensor.victron_battery_soc_223
+        name: Battery SoC
+        type: area
+        yaxis_id: soc
+        opacity: 0.15
+        stroke_width: 1
+        group_by:
+          func: avg
+          duration: 15min
+        extend_to: now
+  - type: grid
+    column_span: 3
+    cards:
+    - type: heading
+      heading: Forecast vs actual (today + tomorrow)
+    - type: custom:apexcharts-card
+      graph_span: 48h
+      span:
+        start: day
+      now:
+        show: true
+        label: Now
+      header:
+        show: false
+      apex_config:
+        chart:
+          height: 300
+        legend:
+          show: true
+      yaxis:
+      - id: kw
+        decimals: 1
+        min: 0
+        apex_config:
+          title:
+            text: kW
+      series:
+      - entity: sensor.ess_pv_forecast
+        name: PV forecast
+        type: area
+        opacity: 0.2
+        curve: smooth
+        yaxis_id: kw
+        data_generator: 'const t0 = new Date(entity.attributes.start).getTime();
+
+          const v = [...(entity.attributes.today || []), ...(entity.attributes.tomorrow || [])];
+
+          return v.map((p, i) => [t0 + i * 900000, p * 4]);'
+        stroke_width: 1
+      - entity: sensor.ess_load_forecast
+        name: Load forecast (excl. EV)
+        type: line
+        curve: stepline
+        yaxis_id: kw
+        data_generator: 'const t0 = new Date(entity.attributes.start).getTime();
+
+          const v = [...(entity.attributes.today || []), ...(entity.attributes.tomorrow || [])];
+
+          return v.map((p, i) => [t0 + i * 900000, p * 4]);'
+        stroke_width: 2
+      - entity: sensor.pv_power
+        name: PV actual
+        type: line
+        yaxis_id: kw
+        transform: return x / 1000;
+        group_by:
+          func: avg
+          duration: 15min
+        stroke_width: 2
+        extend_to: now
+      - entity: sensor.victron_total_ac_out_consumption
+        name: Load actual (incl. EV)
+        type: line
+        yaxis_id: kw
+        transform: return x / 1000;
+        group_by:
+          func: avg
+          duration: 15min
+        stroke_width: 1
+        extend_to: now
+- title: Plan
+  path: plan
+  icon: mdi:chart-timeline-variant
+  type: panel
+  cards:
+  - type: vertical-stack
+    cards:
+    - type: markdown
+      content: '{% set p = ''sensor.ess_plan'' %}{% set names = {''SELF'':''Self-consumption'',''HOLD'':''Hold'',''CHARGE'':''Grid
+        charge'',''EXPORT'':''Sell'',''SOLAR_EXPORT'':''Sell PV, battery idle''} %}## {{ states(''sensor.ess_import_price'')
+        | float(0) | round(2) }} SEK/kWh · 🔋 {{ states(''sensor.victron_battery_soc_223'') | float(0) | round(0) | int }}
+        % · {{ names.get(states(p), states(p)) }}{% if not is_state(''input_select.ess_mode'', ''Auto'') %} (mode {{ states(''input_select.ess_mode'')
+        }}){% endif %}
+
+        {{ (state_attr(p, ''summary'') or [])[:3] | join('' · '') }}'
+    - type: custom:apexcharts-card
+      graph_span: 42h
+      span:
+        start: minute
+        offset: -6h
+      update_interval: 5min
+      now:
+        show: true
+        label: Now
+      header:
+        show: false
+      apex_config:
+        chart:
+          height: EVAL:Math.max(180, Math.round((window.innerHeight - 240) * 0.5))
+          animations:
+            enabled: false
+          events:
+            mounted: "EVAL:function(ctx) { const w = ctx.w; let mx = 0;\n (w.config.series || []).forEach(s => { const d =\
+              \ s.data; if (d && d.length) { const x = Array.isArray(d[d.length - 1]) ? d[d.length - 1][0] : d[d.length -\
+              \ 1].x; if (x > mx) mx = x; } });\n if (mx > w.globals.minX && Math.abs(w.globals.maxX - mx) > 60000) ctx.updateOptions({\
+              \ xaxis: { min: w.globals.minX, max: mx } }, false, false, false); }"
+            updated: "EVAL:function(ctx) { const w = ctx.w; let mx = 0;\n (w.config.series || []).forEach(s => { const d =\
+              \ s.data; if (d && d.length) { const x = Array.isArray(d[d.length - 1]) ? d[d.length - 1][0] : d[d.length -\
+              \ 1].x; if (x > mx) mx = x; } });\n if (mx > w.globals.minX && Math.abs(w.globals.maxX - mx) > 60000) ctx.updateOptions({\
+              \ xaxis: { min: w.globals.minX, max: mx } }, false, false, false); }"
+        stroke:
+          dashArray:
+          - 0
+          - 0
+          - 0
+          - 6
+          - 0
+          - 0
+        legend:
+          show: true
+          fontSize: 14px
+          position: top
+          horizontalAlign: left
+          showForNullSeries: false
+          showForZeroSeries: false
+          clusterGroupedSeries: false
+        xaxis:
+          labels:
+            show: false
+            style:
+              fontSize: 13px
+        tooltip:
+          shared: true
+          x:
+            format: ddd HH:mm
+        grid:
+          borderColor: rgba(128,128,128,0.2)
+          padding:
+            left: 60
+            right: 60
+        yaxis:
+        - seriesName:
+          - Hold
+          - Grid charge
+          - Sell
+          - Planned SoC
+          - SoC
+          min: 0
+          max: 100
+          tickAmount: 5
+          floating: true
+          labels:
+            style:
+              fontSize: 13px
+            offsetX: 54
+            formatter: 'EVAL:function(v) { return v == null ? '''' : v.toFixed(0) + '' %''; }'
+        - seriesName:
+          - Import price (SEK/kWh)
+          opposite: true
+          min: 0
+          floating: true
+          labels:
+            style:
+              fontSize: 13px
+            offsetX: 52
+            formatter: 'EVAL:function(v) { return v == null ? '''' : v.toFixed(2) + '' kr''; }'
+      series:
+      - entity: sensor.ess_plan
+        name: Hold
+        type: area
+        color: '#8a8f98'
+        data_generator: "const t0 = new Date(entity.attributes.start).getTime();\nconst tEnd = t0 + (entity.attributes.quarters\
+          \ || 0) * 900000;\nconst m = entity.attributes.modes || ''; const c = 'H'; const out = [];\nfor (let i = 0; i <=\
+          \ m.length; i++) {\n  const on = i < m.length && c.includes(m[i]); const prev = i > 0 && c.includes(m[i - 1]);\n\
+          \  out.push([t0 + i * 900000, (on || prev) ? 100 : null]);\n}\nreturn out;"
+        extend_to: false
+        show:
+          in_header: false
+          legend_value: false
+        curve: stepline
+        opacity: 0.2
+        stroke_width: 0
+      - entity: sensor.ess_plan
+        name: Grid charge
+        type: area
+        color: '#3b82f6'
+        data_generator: "const t0 = new Date(entity.attributes.start).getTime();\nconst tEnd = t0 + (entity.attributes.quarters\
+          \ || 0) * 900000;\nconst m = entity.attributes.modes || ''; const c = 'C'; const out = [];\nfor (let i = 0; i <=\
+          \ m.length; i++) {\n  const on = i < m.length && c.includes(m[i]); const prev = i > 0 && c.includes(m[i - 1]);\n\
+          \  out.push([t0 + i * 900000, (on || prev) ? 100 : null]);\n}\nreturn out;"
+        extend_to: false
+        show:
+          in_header: false
+          legend_value: false
+        curve: stepline
+        opacity: 0.2
+        stroke_width: 0
+      - entity: sensor.ess_plan
+        name: Sell
+        type: area
+        color: '#14b8a6'
+        data_generator: "const t0 = new Date(entity.attributes.start).getTime();\nconst tEnd = t0 + (entity.attributes.quarters\
+          \ || 0) * 900000;\nconst m = entity.attributes.modes || ''; const c = 'EX'; const out = [];\nfor (let i = 0; i <=\
+          \ m.length; i++) {\n  const on = i < m.length && c.includes(m[i]); const prev = i > 0 && c.includes(m[i - 1]);\n\
+          \  out.push([t0 + i * 900000, (on || prev) ? 100 : null]);\n}\nreturn out;"
+        extend_to: false
+        show:
+          in_header: false
+          legend_value: false
+        curve: stepline
+        opacity: 0.2
+        stroke_width: 0
+      - entity: sensor.ess_plan
+        name: Planned SoC
+        type: line
+        color: '#22c55e'
+        data_generator: 'const t0 = new Date(entity.attributes.start).getTime();
+
+          const v = entity.attributes.soc || [];
+
+          return [[t0, entity.attributes.soc_start * 1], ...v.map((p, i) => [t0 + (i + 1) * 900000, p * 1])];'
+        extend_to: false
+        show:
+          in_header: false
+          legend_value: false
+        stroke_width: 3
+      - entity: sensor.victron_battery_soc_223
+        name: SoC
+        type: line
+        color: '#22c55e'
+        group_by:
+          func: avg
+          duration: 15min
+        extend_to: now
+        show:
+          in_header: false
+          legend_value: false
+        stroke_width: 4
+      - entity: sensor.ess_import_price
+        name: Import price (SEK/kWh)
+        type: line
+        color: '#a855f7'
+        data_generator: 'const d0 = new Date(); d0.setHours(0, 0, 0, 0); const t0 = d0.getTime();
+
+          const tMin = start.getTime() - 900000;
+
+          const p = hass.states[''sensor.ess_plan''];
+
+          const tEnd = p && p.attributes.start ? new Date(p.attributes.start).getTime() + p.attributes.quarters * 900000 :
+          Infinity;
+
+          const a = entity.attributes;
+
+          const v = [...(a.today || []), ...(a.tomorrow || []), ...(a.day_after || [])];
+
+          const out = v.map((x, i) => [t0 + i * 900000, x * 1]).filter(r => r[0] >= tMin && r[0] < tEnd);
+
+          if (out.length && tEnd !== Infinity) out.push([tEnd, out[out.length - 1][1]]);
+
+          return out;'
+        extend_to: false
+        show:
+          in_header: false
+          legend_value: false
+        curve: stepline
+        stroke_width: 3
+    - type: custom:apexcharts-card
+      graph_span: 42h
+      span:
+        start: minute
+        offset: -6h
+      update_interval: 5min
+      now:
+        show: true
+        label: Now
+      header:
+        show: false
+      apex_config:
+        chart:
+          height: EVAL:Math.max(180, Math.round((window.innerHeight - 240) * 0.5))
+          animations:
+            enabled: false
+          events:
+            mounted: "EVAL:function(ctx) { const w = ctx.w; let mx = 0;\n (w.config.series || []).forEach(s => { const d =\
+              \ s.data; if (d && d.length) { const x = Array.isArray(d[d.length - 1]) ? d[d.length - 1][0] : d[d.length -\
+              \ 1].x; if (x > mx) mx = x; } });\n if (mx > w.globals.minX && Math.abs(w.globals.maxX - mx) > 60000) ctx.updateOptions({\
+              \ xaxis: { min: w.globals.minX, max: mx } }, false, false, false); }"
+            updated: "EVAL:function(ctx) { const w = ctx.w; let mx = 0;\n (w.config.series || []).forEach(s => { const d =\
+              \ s.data; if (d && d.length) { const x = Array.isArray(d[d.length - 1]) ? d[d.length - 1][0] : d[d.length -\
+              \ 1].x; if (x > mx) mx = x; } });\n if (mx > w.globals.minX && Math.abs(w.globals.maxX - mx) > 60000) ctx.updateOptions({\
+              \ xaxis: { min: w.globals.minX, max: mx } }, false, false, false); }"
+        stroke:
+          dashArray:
+          - 0
+          - 6
+          - 0
+          - 6
+          - 0
+          - 0
+        legend:
+          show: true
+          fontSize: 14px
+          position: top
+          horizontalAlign: left
+          showForNullSeries: false
+          showForZeroSeries: false
+          clusterGroupedSeries: false
+        xaxis:
+          labels:
+            show: true
+            style:
+              fontSize: 13px
+        tooltip:
+          shared: true
+          x:
+            format: ddd HH:mm
+        grid:
+          borderColor: rgba(128,128,128,0.2)
+          padding:
+            left: 60
+            right: 60
+        yaxis:
+          floating: true
+          labels:
+            style:
+              fontSize: 13px
+            offsetX: 54
+            formatter: 'EVAL:function(v) { return v == null ? '''' : v.toFixed(1) + '' kW''; }'
+      series:
+      - entity: sensor.ess_plan
+        name: Planned grid import
+        type: area
+        color: '#60a5fa'
+        data_generator: 'const t0 = new Date(entity.attributes.start).getTime();
+
+          const tEnd = t0 + (entity.attributes.quarters || 0) * 900000;
+
+          const v = entity.attributes.grid_kw || [];
+
+          const out = v.map((p, i) => [t0 + i * 900000, p * 1]);
+
+          if (v.length) out.push([tEnd, v[v.length - 1] * 1]);
+
+          return out;'
+        extend_to: false
+        show:
+          in_header: false
+          legend_value: false
+        curve: stepline
+        opacity: 0.3
+        stroke_width: 1
+      - entity: sensor.ess_pv_forecast
+        name: PV
+        type: area
+        color: '#eab308'
+        data_generator: 'const t0 = new Date(entity.attributes.start).getTime();
+
+          const tMin = Math.floor(Date.now() / 900000) * 900000;
+
+          const p = hass.states[''sensor.ess_plan''];
+
+          const tEnd = p && p.attributes.start ? new Date(p.attributes.start).getTime() + p.attributes.quarters * 900000 :
+          Infinity;
+
+          const a = entity.attributes;
+
+          const v = [...(a.today || []), ...(a.tomorrow || []), ...(a.day_after || [])];
+
+          const out = v.map((x, i) => [t0 + i * 900000, x * 4]).filter(r => r[0] >= tMin && r[0] < tEnd);
+
+          if (out.length && tEnd !== Infinity) out.push([tEnd, out[out.length - 1][1]]);
+
+          return out;'
+        extend_to: false
+        show:
+          in_header: false
+          legend_value: false
+        curve: smooth
+        opacity: 0.2
+        stroke_width: 2
+      - entity: sensor.pv_power
+        name: PV actual
+        type: line
+        color: '#eab308'
+        group_by:
+          func: avg
+          duration: 15min
+        extend_to: now
+        show:
+          in_header: false
+          legend_value: false
+        stroke_width: 2
+        transform: return x / 1000;
+      - entity: sensor.ess_load_forecast
+        name: Load
+        type: line
+        color: '#ef4444'
+        data_generator: 'const t0 = new Date(entity.attributes.start).getTime();
+
+          const tMin = Math.floor(Date.now() / 900000) * 900000;
+
+          const p = hass.states[''sensor.ess_plan''];
+
+          const tEnd = p && p.attributes.start ? new Date(p.attributes.start).getTime() + p.attributes.quarters * 900000 :
+          Infinity;
+
+          const a = entity.attributes;
+
+          const v = [...(a.today || []), ...(a.tomorrow || []), ...(a.day_after || [])];
+
+          const out = v.map((x, i) => [t0 + i * 900000, x * 4]).filter(r => r[0] >= tMin && r[0] < tEnd);
+
+          if (out.length && tEnd !== Infinity) out.push([tEnd, out[out.length - 1][1]]);
+
+          return out;'
+        extend_to: false
+        show:
+          in_header: false
+          legend_value: false
+        curve: stepline
+        stroke_width: 2
+      - entity: sensor.victron_total_ac_out_consumption
+        name: Load actual
+        type: line
+        color: '#ef4444'
+        group_by:
+          func: avg
+          duration: 15min
+        extend_to: now
+        show:
+          in_header: false
+          legend_value: false
+        stroke_width: 2
+        transform: return x / 1000;
+      - entity: sensor.ess_plan
+        name: EV
+        type: line
+        color: '#06b6d4'
+        data_generator: 'const t0 = new Date(entity.attributes.start).getTime();
+
+          const tEnd = t0 + (entity.attributes.quarters || 0) * 900000;
+
+          const v = entity.attributes.ev_kw || [];
+
+          const out = v.map((p, i) => [t0 + i * 900000, p * 1]);
+
+          if (v.length) out.push([tEnd, v[v.length - 1] * 1]);
+
+          return out;'
+        extend_to: false
+        show:
+          in_header: false
+          legend_value: false
+        curve: stepline
+        stroke_width: 2
+- title: Guest
+  path: guest
+  icon: mdi:account-arrow-right
+  type: sections
+  max_columns: 2
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Guest charging
+    - type: button
+      entity: input_boolean.ess_ev_guest_mode
+      name: Guest mode
+      icon: mdi:account-arrow-right
+      show_state: true
+      icon_height: 60px
+      tap_action:
+        action: toggle
+      hold_action:
+        action: none
+      grid_options:
+        columns: 12
+        rows: 3
+    - type: markdown
+      content: '{% set g = ''pyscript.ess_guest_charging'' %}{% set on = is_state(''input_boolean.ess_ev_guest_mode'', ''on'')
+        %}
+
+        {% if on %}**Guest mode is ON** · {{ states(''sensor.ess_ev'') }} · {{ states(''sensor.victronevcharger_total_power40'')
+        | float(0) | round(0) }} W
+
+        The car is charged from the grid (and from solar surplus the house battery cannot take). The house battery is never
+        used.{% else %}**Guest mode is off.** Turn it on to charge a guest car right away.{% endif %}
+
+
+        {% if on or state_attr(g, ''started'') %}**{{ ''Current session'' if on else ''Session'' }}**{% if state_attr(g, ''started'')
+        %} since {{ as_timestamp(state_attr(g, ''started'')) | timestamp_custom(''%a %d/%m %H:%M'') }}{% endif %}
+
+
+        | | |
+
+        |---|---|
+
+        | Charged | **{{ state_attr(g, ''energy_kwh'') | float(0) | round(2) }} kWh** |
+
+        | from the grid | {{ state_attr(g, ''grid_kwh'') | float(0) | round(2) }} kWh |
+
+        | from solar surplus | {{ state_attr(g, ''solar_kwh'') | float(0) | round(2) }} kWh |
+
+        | Cost of grid energy | **{{ state_attr(g, ''cost_sek'') | float(0) | round(2) }} SEK** |
+
+        | Average grid price | {{ (state_attr(g, ''avg_price'') | string) ~ '' SEK/kWh'' if state_attr(g, ''avg_price'') else
+        ''–'' }} |
+
+        | Import price now | {{ states(''sensor.ess_import_price'') }} SEK/kWh |
+
+        {% endif %}
+
+        {% set l = state_attr(g, ''last_session'') %}{% if l %}
+
+        **Last finished session** {{ as_timestamp(l.started) | timestamp_custom(''%d/%m %H:%M'') }}–{{ as_timestamp(l.ended)
+        | timestamp_custom(''%H:%M'') }}: {{ l.energy_kwh }} kWh ({{ l.grid_kwh }} kWh grid, {{ l.solar_kwh }} kWh solar),
+        **{{ l.cost_sek }} SEK**{% endif %}
+
+
+        <sub>Cost = grid share × import price incl. fees and VAT (fixed monthly fees excluded). Guest mode turns itself off
+        when the car is unplugged.</sub>'
+    - type: entities
+      entities:
+      - input_number.ess_ev_guest_current
+      - sensor.victronevcharger_status40
+      - sensor.victronevcharger_total_power40
+      - sensor.ess_import_price
+  - type: grid
+    cards:
+    - type: heading
+      heading: Power, last 6 h
+    - type: custom:apexcharts-card
+      graph_span: 6h
+      header:
+        show: false
+      apex_config:
+        chart:
+          height: 260
+        legend:
+          show: true
+      yaxis:
+      - id: kw
+        decimals: 1
+        apex_config:
+          title:
+            text: kW
+      series:
+      - entity: sensor.victronevcharger_total_power40
+        name: Charger
+        type: area
+        opacity: 0.25
+        yaxis_id: kw
+        transform: return x / 1000;
+        group_by:
+          func: avg
+          duration: 2min
+        extend_to: now
+      - entity: sensor.grid_power
+        name: Grid (P1)
+        type: line
+        yaxis_id: kw
+        transform: return x / 1000;
+        group_by:
+          func: avg
+          duration: 2min
+        extend_to: now
+      - entity: sensor.pv_power
+        name: Solar
+        type: line
+        yaxis_id: kw
+        transform: return x / 1000;
+        group_by:
+          func: avg
+          duration: 2min
+        extend_to: now
+      - entity: sensor.victron_system_battery_power
+        name: House battery
+        type: line
+        yaxis_id: kw
+        transform: return x / 1000;
+        group_by:
+          func: avg
+          duration: 2min
+        extend_to: now
+- title: Tuning
+  path: tuning
+  icon: mdi:tune
+  type: sections
+  max_columns: 3
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Prices (öre/kWh excl. VAT)
+    - type: entities
+      entities:
+      - input_number.ess_vat
+      - input_number.ess_grid_fee
+      - input_number.ess_energy_tax
+      - input_number.ess_supplier_variable
+      - input_number.ess_supplier_markup
+      - input_number.ess_peak_hour_fee
+      - input_number.ess_export_bonus
+      - input_number.ess_export_net_benefit
+  - type: grid
+    cards:
+    - type: heading
+      heading: Battery
+    - type: entities
+      entities:
+      - input_number.ess_battery_capacity
+      - input_number.ess_min_soc
+      - input_number.ess_max_soc_grid_charge
+      - input_boolean.ess_measured_efficiency
+      - input_number.ess_round_trip_efficiency
+      - input_number.ess_standby_loss
+      - input_number.ess_wear_cost
+      - input_number.ess_full_charge_interval
+      - input_number.ess_grid_offset
+  - type: grid
+    cards:
+    - type: heading
+      heading: Power limits
+    - type: entities
+      entities:
+      - input_number.ess_main_fuse
+      - input_number.ess_max_import
+      - input_number.ess_max_grid_charge
+      - input_number.ess_max_export
+  - type: grid
+    cards:
+    - type: heading
+      heading: Forecast and safety
+    - type: entities
+      entities:
+      - input_number.ess_night_reserve_margin
+      - input_select.ess_pv_source
+      - input_number.ess_solar_forecast_factor
+      - input_number.ess_reserve_solar_factor
+      - input_number.ess_load_forecast_factor
+      - input_number.ess_load_temp_coeff
+      - input_number.ess_load_temp_balance
+      - input_number.ess_pv_sunny_threshold
+      - input_number.ess_sell_min_pv_today
+      - input_number.ess_sell_spike_price
+  - type: grid
+    cards:
+    - type: heading
+      heading: EV
+    - type: entities
+      entities:
+      - input_number.ess_ev_target_summer
+      - input_number.ess_ev_target_winter
+      - input_number.ess_ev_max_reachable_soc
+      - input_number.ess_ev_cold_temp
+      - input_number.ess_ev_warm_temp
+      - input_number.ess_ev_finish_margin
+      - input_number.ess_ev_opportunistic_target
+      - input_number.ess_ev_opportunistic_max_price
+      - input_number.ess_ev_kwh_per_percent
+      - input_number.ess_ev_charge_power
+      - input_boolean.ess_ev_use_learned
+- title: Diagnostics
+  path: diagnostics
+  icon: mdi:stethoscope
+  type: sections
+  max_columns: 3
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Executor
+    - type: markdown
+      content: '{% set e = ''sensor.ess_executor'' %}
+
+        Updated {{ (state_attr(e, ''updated'') or ''–'')[11:19] }} · instance {{ state_attr(e, ''instance'') }} (started {{
+        (state_attr(e, ''started'') or '''')[11:19] }})
+
+        Register writes last hour: **{{ state_attr(e, ''writes_last_hour'') }}** · last write {{ (state_attr(e, ''last_write'')
+        or ''–'')[11:19] }}'
+    - type: entities
+      entities:
+      - sensor.ess_executor
+      - sensor.ess_ev
+  - type: grid
+    cards:
+    - type: heading
+      heading: Victron registers (live)
+    - type: entities
+      entities:
+      - number.victron_settings_ess_acpowersetpoint
+      - number.victron_settings_ess_batterylife_minimumsoc
+      - number.victron_settings_ess_maxchargecurrent
+      - switch.victron_settings_ess_preventfeedback
+      - switch.victron_settings_ess_overvoltagefeedin
+      - select.victron_settings_ess_mode
+      - switch.victron_evcharger_startstop_40
+      - number.victron_evcharger_setcurrent_40
+      - select.victron_evcharger_mode_40
+  - type: grid
+    cards:
+    - type: heading
+      heading: 'Grid per phase: P1 vs Victron'
+    - type: entities
+      entities:
+      - sensor.grid_power_l1
+      - sensor.grid_power_l2
+      - sensor.grid_power_l3
+      - sensor.victron_system_grid_l1
+      - sensor.victron_system_grid_l2
+      - sensor.victron_system_grid_l3
+  - type: grid
+    column_span: 2
+    cards:
+    - type: heading
+      heading: Forecast accuracy
+    - type: markdown
+      content: '{% set a = ''sensor.ess_forecast_accuracy'' %}
+
+        PV bias (7 d): **{{ state_attr(a, ''pv_bias'') }}** from {{ state_attr(a, ''pv_days'') }} days · load actual/forecast
+        (7 d): **{{ state_attr(a, ''load_ratio_7d'') }}** · hourly load MAE {{ state_attr(a, ''load_mae_7d_w'') }} W
+
+
+        | Date | PV fc | PV act | Load fc | Load act | MAE W |
+
+        |---|---|---|---|---|---|
+
+        {% for d in (state_attr(a, ''days'') or []) | reverse %}| {{ d.date }}{{ '' (bt)'' if d.backtest }} | {{ d.pv_fc if
+        d.pv_fc is not none else ''–'' }} | {{ d.pv_act if d.pv_act is not none else ''–'' }} | {{ d.load_fc }} | {{ d.load_act
+        }} | {{ d.load_mae_w }} |
+
+        {% endfor %}'
+  - type: grid
+    cards:
+    - type: heading
+      heading: EV learning
+    - type: markdown
+      content: '{% set e = ''sensor.ess_ev_learning'' %}
+
+        Learned **{{ states(e) }} kWh/%** · {{ state_attr(e, ''power_w'') }} W · {{ state_attr(e, ''sessions'') }} sessions
+        (used when ≥ 3 and the toggle is on)
+
+        Last: {{ state_attr(e, ''last'') }}'

@@ -1,0 +1,447 @@
+# ESS optimizer helpers. Put this file in /config/packages/ (homeassistant: packages: !include_dir_named packages).
+# No `initial` values on purpose: HA restores the last value after a restart. Set the values once after the
+# first start; docs/configuration.md lists the reference values of the author's system.
+input_number:
+  ess_battery_capacity:
+    name: ESS battery capacity
+    min: 20.0
+    max: 40.0
+    step: 0.5
+    mode: box
+    unit_of_measurement: kWh
+    icon: mdi:battery-high
+  ess_energy_tax:
+    name: ESS energy tax
+    min: 0.0
+    max: 200.0
+    step: 0.01
+    mode: box
+    unit_of_measurement: öre/kWh
+    icon: mdi:bank
+  ess_ev_charge_power:
+    name: ESS EV charge power
+    min: 1000.0
+    max: 11000.0
+    step: 100.0
+    mode: box
+    unit_of_measurement: W
+    icon: mdi:ev-station
+  ess_ev_cold_temp:
+    name: ESS EV cold temp
+    min: -30.0
+    max: 15.0
+    step: 1.0
+    mode: box
+    unit_of_measurement: °C
+    icon: mdi:snowflake-thermometer
+  ess_ev_finish_margin:
+    name: ESS EV finish margin
+    min: 0.0
+    max: 180.0
+    step: 5.0
+    mode: box
+    unit_of_measurement: min
+    icon: mdi:timer-sand
+  ess_ev_guest_current:
+    name: ESS EV guest current
+    min: 6.0
+    max: 16.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: A
+    icon: mdi:current-ac
+  ess_ev_kwh_per_percent:
+    name: ESS EV kWh per percent
+    min: 0.1
+    max: 0.5
+    step: 0.01
+    mode: box
+    unit_of_measurement: kWh/%
+    icon: mdi:car-battery
+  ess_ev_manual_target:
+    name: ESS EV manual target
+    min: 20.0
+    max: 100.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:battery-charging-80
+  ess_ev_max_reachable_soc:
+    name: ESS EV max reachable SoC
+    min: 80.0
+    max: 100.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:car-battery
+  ess_ev_opportunistic_max_price:
+    name: ESS EV opportunistic max price
+    min: 0.0
+    max: 500.0
+    step: 5.0
+    mode: box
+    unit_of_measurement: öre/kWh
+    icon: mdi:cash
+  ess_ev_opportunistic_target:
+    name: ESS EV opportunistic target
+    min: 20.0
+    max: 100.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:car-electric-outline
+  ess_ev_target_summer:
+    name: ESS EV target at warm temp
+    min: 20.0
+    max: 100.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:car-electric
+  ess_ev_target_winter:
+    name: ESS EV target at cold temp
+    min: 20.0
+    max: 100.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:car-electric
+  ess_ev_warm_temp:
+    name: ESS EV warm temp
+    min: 0.0
+    max: 35.0
+    step: 1.0
+    mode: box
+    unit_of_measurement: °C
+    icon: mdi:sun-thermometer
+  ess_export_bonus:
+    name: ESS export bonus
+    min: -50.0
+    max: 100.0
+    step: 0.01
+    mode: box
+    unit_of_measurement: öre/kWh
+    icon: mdi:solar-power
+  ess_export_net_benefit:
+    name: ESS export net benefit
+    min: -50.0
+    max: 100.0
+    step: 0.01
+    mode: box
+    unit_of_measurement: öre/kWh
+    icon: mdi:transmission-tower-export
+  ess_full_charge_interval:
+    name: ESS full charge interval
+    min: 1.0
+    max: 60.0
+    step: 1.0
+    mode: box
+    unit_of_measurement: d
+    icon: mdi:calendar-sync
+  ess_grid_fee:
+    name: ESS grid fee
+    min: 0.0
+    max: 300.0
+    step: 0.01
+    mode: box
+    unit_of_measurement: öre/kWh
+    icon: mdi:transmission-tower
+  ess_grid_offset:
+    name: ESS grid offset
+    min: -200.0
+    max: 200.0
+    step: 10.0
+    mode: box
+    unit_of_measurement: W
+    icon: mdi:tune-vertical
+  ess_load_temp_balance:
+    name: ESS load balance temperature
+    min: 0.0
+    max: 20.0
+    step: 0.5
+    mode: box
+    unit_of_measurement: °C
+    icon: mdi:thermometer
+  ess_load_forecast_factor:
+    name: ESS load forecast factor
+    min: 50.0
+    max: 200.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:home-lightning-bolt
+  ess_load_temp_coeff:
+    name: ESS load temperature coefficient
+    min: 0.0
+    max: 200.0
+    step: 5.0
+    mode: box
+    unit_of_measurement: W/°C
+    icon: mdi:thermometer-chevron-down
+  ess_main_fuse:
+    name: ESS main fuse
+    min: 10.0
+    max: 63.0
+    step: 1.0
+    mode: box
+    unit_of_measurement: A
+    icon: mdi:fuse
+  ess_manual_export_floor:
+    name: ESS manual export floor
+    min: 5.0
+    max: 100.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:battery-arrow-down
+  ess_manual_power:
+    name: ESS manual power
+    min: 0.0
+    max: 11000.0
+    step: 100.0
+    mode: slider
+    unit_of_measurement: W
+    icon: mdi:flash
+  ess_max_export:
+    name: ESS max export
+    min: 0.0
+    max: 11000.0
+    step: 100.0
+    mode: slider
+    unit_of_measurement: W
+    icon: mdi:transmission-tower-export
+  ess_max_grid_charge:
+    name: ESS max grid charge
+    min: 0.0
+    max: 11000.0
+    step: 100.0
+    mode: slider
+    unit_of_measurement: W
+    icon: mdi:battery-charging
+  ess_max_import:
+    name: ESS max import
+    min: 1000.0
+    max: 11000.0
+    step: 100.0
+    mode: slider
+    unit_of_measurement: W
+    icon: mdi:transmission-tower-import
+  ess_max_soc_grid_charge:
+    name: ESS max SoC grid charge
+    min: 10.0
+    max: 100.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:battery-charging-90
+  ess_min_soc:
+    name: ESS min SoC
+    min: 5.0
+    max: 100.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:battery-10
+  ess_night_reserve_margin:
+    name: ESS night reserve margin
+    min: 0.0
+    max: 100.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:weather-night
+  ess_override_hours:
+    name: ESS override hours
+    min: 0.0
+    max: 48.0
+    step: 0.5
+    mode: box
+    unit_of_measurement: h
+    icon: mdi:timer-outline
+  ess_peak_hour_fee:
+    name: ESS peak hour fee
+    min: 0.0
+    max: 300.0
+    step: 0.01
+    mode: box
+    unit_of_measurement: öre/kWh
+    icon: mdi:clock-alert-outline
+  ess_pv_sunny_threshold:
+    name: ESS PV sunny threshold
+    min: 20.0
+    max: 95.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:weather-sunny
+  ess_reserve_solar_factor:
+    name: ESS reserve solar factor
+    min: 10.0
+    max: 100.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:solar-power-variant-outline
+  ess_round_trip_efficiency:
+    name: ESS round trip efficiency
+    min: 50.0
+    max: 100.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:sync
+  ess_sell_min_pv_today:
+    name: ESS sell min PV today
+    min: 0.0
+    max: 50.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: kWh
+    icon: mdi:solar-power-variant
+  ess_sell_spike_price:
+    name: ESS sell spike price
+    min: 0.0
+    max: 10.0
+    step: 0.05
+    mode: box
+    unit_of_measurement: SEK/kWh
+    icon: mdi:flash-alert
+  ess_solar_forecast_factor:
+    name: ESS solar forecast factor
+    min: 10.0
+    max: 150.0
+    step: 5.0
+    mode: slider
+    unit_of_measurement: '%'
+    icon: mdi:solar-power-variant
+  ess_standby_loss:
+    name: ESS standby loss
+    min: 0.0
+    max: 300.0
+    step: 5.0
+    mode: box
+    unit_of_measurement: W
+    icon: mdi:power-plug-battery-outline
+  ess_supplier_markup:
+    name: ESS supplier markup
+    min: -50.0
+    max: 100.0
+    step: 0.01
+    mode: box
+    unit_of_measurement: öre/kWh
+    icon: mdi:cash-plus
+  ess_supplier_variable:
+    name: ESS supplier variable
+    min: -50.0
+    max: 100.0
+    step: 0.01
+    mode: box
+    unit_of_measurement: öre/kWh
+    icon: mdi:cash-plus
+  ess_vat:
+    name: ESS VAT
+    min: 0.0
+    max: 50.0
+    step: 1.0
+    mode: box
+    unit_of_measurement: '%'
+    icon: mdi:percent
+  ess_wear_cost:
+    name: ESS wear cost
+    min: 0.0
+    max: 100.0
+    step: 1.0
+    mode: slider
+    unit_of_measurement: öre/kWh
+    icon: mdi:battery-heart-variant
+input_boolean:
+  ess_allow_battery_export:
+    name: ESS allow battery export
+    icon: mdi:battery-arrow-up
+  ess_allow_battery_to_ev:
+    name: ESS allow battery to EV
+    icon: mdi:home-battery
+  ess_allow_grid_charge:
+    name: ESS allow grid charge
+    icon: mdi:transmission-tower-import
+  ess_allow_solar_export:
+    name: ESS allow solar export
+    icon: mdi:solar-power
+  ess_block_export_negative_price:
+    name: ESS block export negative price
+    icon: mdi:currency-usd-off
+  ess_ev_guest_mode:
+    name: ESS EV guest mode
+    icon: mdi:account-arrow-right
+  ess_ev_manual_departure:
+    name: ESS EV manual departure
+    icon: mdi:calendar-clock
+  ess_ev_preheat:
+    name: ESS EV preheat
+    icon: mdi:car-seat-heater
+  ess_ev_smart_control:
+    name: ESS EV smart control
+    icon: mdi:car-cog
+  ess_ev_use_learned:
+    name: ESS EV use learned
+    icon: mdi:school
+  ess_force_full_charge:
+    name: ESS force full charge
+    icon: mdi:battery-sync
+  ess_measured_efficiency:
+    name: ESS measured efficiency
+    icon: mdi:chart-bell-curve-cumulative
+input_select:
+  ess_ev_mode:
+    name: ESS EV mode
+    options:
+    - Auto
+    - Charge now
+    - 'Off'
+    icon: mdi:ev-station
+  ess_ev_next_departure:
+    name: ESS EV next departure
+    options:
+    - Auto
+    - 'Yes'
+    - 'No'
+    icon: mdi:car-clock
+  ess_ev_season:
+    name: ESS EV season
+    options:
+    - Auto
+    - Summer
+    - Winter
+    icon: mdi:sun-snowflake-variant
+  ess_mode:
+    name: ESS mode
+    options:
+    - Auto
+    - Self-consumption
+    - Hold
+    - Charge now
+    - Export now
+    - Victron default
+    icon: mdi:home-battery-outline
+  ess_pv_source:
+    name: ESS PV source
+    options:
+    - Open-Meteo
+    - VRM
+    icon: mdi:solar-power-variant
+input_datetime:
+  ess_ev_departure:
+    name: ESS EV departure
+    has_date: false
+    has_time: true
+    icon: mdi:car-clock
+  ess_ev_manual_departure_time:
+    name: ESS EV manual departure time
+    has_date: true
+    has_time: true
+    icon: mdi:clock-end
+  ess_override_until:
+    name: ESS override until
+    has_date: true
+    has_time: true
+    icon: mdi:clock-end

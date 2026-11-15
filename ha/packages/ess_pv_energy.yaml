@@ -1,0 +1,16 @@
+# PV energy counters (used for the selling gate and forecast scoring). The same can be made in the UI:
+# Helpers -> Integral (Riemann sum, left, kWh) on sensor.pv_power, and Utility meter (daily) on the result.
+sensor:
+  - platform: integration
+    source: sensor.pv_power
+    name: pv_energy_total
+    unique_id: pv_energy_total
+    unit_prefix: k
+    round: 3
+    method: left
+utility_meter:
+  pv_energy_today:
+    source: sensor.pv_energy_total
+    name: pv_energy_today
+    unique_id: pv_energy_today
+    cycle: daily

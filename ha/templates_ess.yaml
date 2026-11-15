@@ -1,0 +1,84 @@
+# Price and helper template sensors. Include from configuration.yaml (template: !include ...) or merge into
+# your existing template file. Change the Nord Pool entity to your price area and currency.
+# --- ESS optimizer: real per-kWh import/export prices (phase 0, 2026-10-02) ---
+# The Nordpool sensor is spot incl. 25 % VAT. Fee helpers are öre/kWh excl. VAT (grid operator / supplier invoice).
+# import = (spot_excl + grid fee + energy tax + supplier variable + markup + peak fee) * (1 + VAT)
+# export = spot_excl + export bonus + net benefit (nätnytta); no VAT on private export.
+- sensor:
+    - name: ESS import price
+      unique_id: ess_import_price
+      unit_of_measurement: "SEK/kWh"
+      icon: mdi:transmission-tower-import
+      availability: "{{ states('sensor.nordpool_kwh_se3_sek_2_10_025') | is_number }}"
+      variables:
+        vat: "{{ 1 + states('input_number.ess_vat') | float(25) / 100 }}"
+        fees: >-
+          {{ (states('input_number.ess_grid_fee') | float(0)
+            + states('input_number.ess_energy_tax') | float(0)
+            + states('input_number.ess_supplier_variable') | float(0)
+            + states('input_number.ess_supplier_markup') | float(0)
+            + states('input_number.ess_peak_hour_fee') | float(0)) / 100 }}
+      state: "{{ ((states('sensor.nordpool_kwh_se3_sek_2_10_025') | float / 1.25 + fees) * vat) | round(4) }}"
+      attributes:
+        today: >-
+          {% set ns = namespace(l=[]) %}
+          {% for p in state_attr('sensor.nordpool_kwh_se3_sek_2_10_025', 'today') or [] %}
+            {% set ns.l = ns.l + [((p / 1.25 + fees) * vat) | round(4) if p is number else none] %}
+          {% endfor %}
+          {{ ns.l }}
+        tomorrow: >-
+          {% set ns = namespace(l=[]) %}
+          {% if state_attr('sensor.nordpool_kwh_se3_sek_2_10_025', 'tomorrow_valid') %}
+            {% for p in state_attr('sensor.nordpool_kwh_se3_sek_2_10_025', 'tomorrow') or [] %}
+              {% set ns.l = ns.l + [((p / 1.25 + fees) * vat) | round(4) if p is number else none] %}
+            {% endfor %}
+          {% endif %}
+          {{ ns.l }}
+
+    - name: ESS export price
+      unique_id: ess_export_price
+      unit_of_measurement: "SEK/kWh"
+      icon: mdi:transmission-tower-export
+      availability: "{{ states('sensor.nordpool_kwh_se3_sek_2_10_025') | is_number }}"
+      variables:
+        extra: >-
+          {{ (states('input_number.ess_export_bonus') | float(0)
+            + states('input_number.ess_export_net_benefit') | float(0)) / 100 }}
+      state: "{{ (states('sensor.nordpool_kwh_se3_sek_2_10_025') | float / 1.25 + extra) | round(4) }}"
+      attributes:
+        today: >-
+          {% set ns = namespace(l=[]) %}
+          {% for p in state_attr('sensor.nordpool_kwh_se3_sek_2_10_025', 'today') or [] %}
+            {% set ns.l = ns.l + [(p / 1.25 + extra) | round(4) if p is number else none] %}
+          {% endfor %}
+          {{ ns.l }}
+        tomorrow: >-
+          {% set ns = namespace(l=[]) %}
+          {% if state_attr('sensor.nordpool_kwh_se3_sek_2_10_025', 'tomorrow_valid') %}
+            {% for p in state_attr('sensor.nordpool_kwh_se3_sek_2_10_025', 'tomorrow') or [] %}
+              {% set ns.l = ns.l + [(p / 1.25 + extra) | round(4) if p is number else none] %}
+            {% endfor %}
+          {% endif %}
+          {{ ns.l }}
+
+# Helper sensors used by the scripts and the dashboard. Adapt the source entities to your installation.
+- sensor:
+    - name: grid_power  # W, + = import. Here from a P1 (HAN) meter; with a Victron grid meter use its total power.
+      unique_id: grid_power
+      unit_of_measurement: "W"
+      device_class: power
+      state: "{{ ((states('sensor.momentary_active_import') | float(0) - states('sensor.momentary_active_export') | float(0)) * 1000) | round(0) }}"
+    - name: victron_total_ac_out_consumption  # W, all AC loads incl. the EV charger
+      unique_id: victron_total_ac_out_consumption
+      unit_of_measurement: "W"
+      device_class: power
+      state: >-
+        {{ states('sensor.victron_system_consumption_l1') | float(0) + states('sensor.victron_system_consumption_l2') | float(0)
+           + states('sensor.victron_system_consumption_l3') | float(0) }}
+    - name: pv_power  # W, AC-coupled PV on AC-out (L1-L3) + DC MPPT yield. Drop the parts you do not have.
+      unique_id: pv_power
+      unit_of_measurement: "W"
+      device_class: power
+      state: >-
+        {{ states('sensor.victron_system_pvonoutput_l1') | float(0) + states('sensor.victron_system_pvonoutput_l2') | float(0)
+           + states('sensor.victron_system_pvonoutput_l3') | float(0) + states('sensor.victronsolarcharger_yield_power224') | float(0) }}
