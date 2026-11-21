@@ -83,6 +83,7 @@ The scripts read and write the entities below. Replace them with yours using sea
 | `ess_night_reserve_margin` | ESS night reserve margin | 20 % |
 | `ess_override_hours` | ESS override hours | 4 h |
 | `ess_peak_hour_fee` | ESS peak hour fee | 0 öre/kWh |
+| `ess_pv_snow_temp` | ESS PV snow temp | 3 °C |
 | `ess_pv_sunny_threshold` | ESS PV sunny threshold | 60 % |
 | `ess_reserve_solar_factor` | ESS reserve solar factor | 70 % |
 | `ess_round_trip_efficiency` | ESS round trip efficiency | 80 % |
@@ -106,6 +107,7 @@ The scripts read and write the entities below. Replace them with yours using sea
 | `ess_ev_use_learned` | ESS EV use learned | on |
 | `ess_force_full_charge` | ESS force full charge | off |
 | `ess_measured_efficiency` | ESS measured efficiency | on |
+| `ess_pv_snow_compensation` | ESS PV snow compensation | on |
 | `ess_ev_mode` | ESS EV mode | Auto |
 | `ess_ev_next_departure` | ESS EV next departure | Auto |
 | `ess_ev_season` | ESS EV season | Auto |

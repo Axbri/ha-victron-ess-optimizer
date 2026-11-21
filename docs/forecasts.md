@@ -1,6 +1,6 @@
 # Forecasts (`ess_forecast.py`)
 
-Runs hourly at :12 and at startup. Every forecast sensor has `today` / `tomorrow` / `day_after` attributes: kWh per quarter from local midnight.
+Runs hourly at :12 and at startup; the PV forecast alone is also refreshed every quarter. Every forecast sensor has `today` / `tomorrow` / `day_after` attributes: kWh per quarter from local midnight.
 
 ## PV: `sensor.ess_pv_forecast`
 
@@ -13,6 +13,17 @@ Source chosen by `input_select.ess_pv_source`, multiplied by `ess_solar_forecast
   - weight 0 → 1 as clearness goes from `ess_pv_sunny_threshold` − 20 % to the threshold.
 
 Over 23 autumn days, Open-Meteo's day-ahead MAE was 1.91 kWh/day vs 2.67 for bias-corrected VRM.
+
+### Snow compensation
+
+A thin snow layer on the panels cut production to 15–25 % of the forecast for three days on the author's system, while the forecasts saw clear sky. With `input_boolean.ess_pv_snow_compensation` on and the outdoor temperature below `ess_pv_snow_temp` (default 3 °C), the forecast in use is scaled down:
+
+- **Today's factor** = measured production / forecast over today's elapsed quarters (5-minute statistics of the PV energy sensor). Each quarter is weighted 0.5^(age / 2 h), so the factor recovers within a few hours when the snow slides off. It is clamped to 0–1, so it never raises the forecast.
+- It needs ≥ 0.5 kWh of forecast in the elapsed quarters. Before that (night, early morning), the last measured factor is carried for up to 36 h.
+- **Tomorrow and the day after** get the same factor when their forecast mean temperature is also below the threshold.
+- At or above the threshold, nothing is scaled and the carried factor is cleared.
+
+The factors are in the attributes `today_snow_factor` / `tomorrow_snow_factor` / `day_after_snow_factor`, and `snow` holds the reason. `*_raw_kwh` and `sensor.ess_pv_forecast_vrm` stay uncompensated. `pyscript.ess_pv_snow` keeps the carried factor and the lowest measured factor per day. Days below 0.85 count as snow days and are skipped by the VRM sunny-day bias learning. The PV forecast is refreshed every quarter (:00/:15/:30/:45, just before the optimizer), so the factor follows the day.
 
 Solcast-style forecasts that need DC power per panel group do not fit AC-coupled systems.
 

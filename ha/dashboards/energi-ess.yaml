@@ -1013,6 +1013,13 @@ views:
       entities:
       - input_number.ess_night_reserve_margin
       - input_select.ess_pv_source
+      - input_boolean.ess_pv_snow_compensation
+      - input_number.ess_pv_snow_temp
+      - type: attribute
+        entity: sensor.ess_pv_forecast
+        attribute: today_snow_factor
+        name: PV snow factor today
+        icon: mdi:snowflake
       - input_number.ess_solar_forecast_factor
       - input_number.ess_reserve_solar_factor
       - input_number.ess_load_forecast_factor

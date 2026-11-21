@@ -7,6 +7,8 @@ quarter from local midnight, like the price sensors (92/96/100 quarters on DST d
                                 Open-Meteo Solar Forecast (roof + wall, quarters) x slider, or VRM (below);
                                 VRM is the fallback when Open-Meteo has no complete data
   sensor.ess_pv_forecast_vrm    VRM hourly solar forecast -> quarters, x sunny-day bias (sunny days only) x slider
+                                Snow compensation (below input_number.ess_pv_snow_temp): sensor.ess_pv_forecast is
+                                scaled by measured production / forecast of today's elapsed quarters
   sensor.ess_load_forecast      house load excl. EV charging: hour-of-day profile of the last 14 days,
                                 recency-weighted (half-life 4 days), temperature-normalised and re-applied
                                 with the forecast temperature (heating W = coeff x (balance - outdoor temp))
@@ -40,6 +42,17 @@ OM_PREFIX = ["sensor.om_solar_roof_energy_production_", "sensor.om_solar_wall_en
 OM_DAY = {"today": "today", "tomorrow": "tomorrow", "day_after": "d2"}
 DAYS = (("today", 0), ("tomorrow", 1), ("day_after", 2))
 HISTORY = "pyscript.ess_forecast_history"
+# Snow compensation (owner, 2026-11-21): a thin snow layer cut production to 15-25 % of the forecast on 2026-11-19..21
+# while the forecasts saw clear sky. Below SNOW_TEMP (outdoor) the forecast in use is scaled by the measured ratio
+# actual / forecast of today's elapsed quarters, weighted towards the last hours so it follows the snow sliding off.
+SNOW_ON = "input_boolean.ess_pv_snow_compensation"
+SNOW_TEMP = "input_number.ess_pv_snow_temp"
+SNOW_STATE = "pyscript.ess_pv_snow"  # last measured factor, and the lowest applied factor per day (snow days)
+SNOW_HALF_LIFE_H = 2.0  # recency weighting of the elapsed quarters
+SNOW_MIN_FC_KWH = 0.5  # forecast energy in today's elapsed quarters before today's own ratio is trusted
+SNOW_MIN_WFC_KWH = 0.2  # the same, recency weighted (the evening has no recent forecast to compare with)
+SNOW_CARRY_H = 36  # a measured factor is carried into the next morning (and a cold day after) for this long
+SNOW_DAY_FLAG = 0.85  # a day whose applied factor went below this is a snow day: skipped by the VRM bias learning
 EV_LEARN = "pyscript.ess_ev_learning"
 PROFILE_DAYS = 14  # workday profile: workdays of the last 14 days
 HALF_LIFE_DAYS = 4
@@ -57,6 +70,9 @@ C = {"workday": {}, "session": None}
 
 state.persist(HISTORY, default_value="0", default_attributes={"days": [], "snapshot": {}})
 state.persist(EV_LEARN, default_value="0", default_attributes={"sessions": EV_SEED})
+# Seeded with the snow days before this existed (measured day ratios), so they stay out of the bias learning.
+state.persist(SNOW_STATE, default_value="1.0", default_attributes={
+    "factor": 1.0, "measured_at": None, "min_by_day": {"2026-11-19": 0.21, "2026-11-20": 0.17, "2026-11-21": 0.2}})
 
 
 def _num(entity, default=None):
@@ -124,11 +140,11 @@ def _quarter_kwh(records, t):
     return wh * rates[(ts - hour) // 900] / total / 1000
 
 
-def _statistics(ids, start, end, types):
+def _statistics(ids, start, end, types, period="hour"):
     from homeassistant.components.recorder import get_instance
     from homeassistant.components.recorder.statistics import statistics_during_period
     return await get_instance(hass).async_add_executor_job(
-        statistics_during_period, hass, start, end, set(ids), "hour", None, set(types))
+        statistics_during_period, hass, start, end, set(ids), period, None, set(types))
 
 
 def _base_load_hours(rows):
@@ -282,10 +298,18 @@ def _sun_weight(clearness):
     return min(1.0, max(0.0, (clearness - (thr - 0.2)) / 0.2))
 
 
+def _snow_days():
+    """Dates (ISO) whose applied snow factor went below SNOW_DAY_FLAG."""
+    by_day = _attrs(SNOW_STATE).get("min_by_day") or {}
+    return [k for k, v in by_day.items() if v is not None and v < SNOW_DAY_FLAG]
+
+
 def _pv_bias(days, ref):
     """Actual / raw VRM forecast, learned from sunny days only (VRM is low on clear days and high on cloudy
-    ones, so a mixed average is wrong on both)."""
+    ones, so a mixed average is wrong on both). Snow days are skipped: their low production is not a VRM error."""
+    snow = _snow_days()
     sunny = [d for d in days if d.get("pv_act") is not None and (d.get("pv_fc_raw") or 0) > 1
+             and not d.get("snow") and d.get("date") not in snow
              and _sun_weight(d.get("clearness") or d["pv_fc_raw"] / ref) >= 1.0][-7:]
     if len(sunny) < 3:
         return 1.0, len(sunny)
@@ -317,6 +341,118 @@ def _pv_attrs(raws, source, bias, bias_days, ref, factor):
             remaining = sum([v for t, v in zip(_quarters(today), values) if t + QUARTER > now])
     attrs["raw_today_kwh"] = round(raw_totals["today"], 2)
     return remaining, attrs
+
+
+def _snow_ratio(today_values):
+    """(ratio, forecast kWh, actual kWh) over today's elapsed quarters: measured production / forecast, each quarter
+    weighted 0.5 ** (age / SNOW_HALF_LIFE_H). Ratio None while there is too little forecast energy to judge."""
+    now = dt_util.now()
+    today = now.date()
+    rows = _statistics([PV_ENERGY], _midnight(today), now, {"change"}, "5minute")
+    act = {}
+    starts = []
+    for r in rows.get(PV_ENERGY, []):
+        t0 = int(r["start"])
+        starts.append(t0)
+        q = t0 // 900 * 900
+        act[q] = act.get(q, 0.0) + max(r.get("change") or 0.0, 0.0)
+    if len(starts) < 2:
+        return None, 0.0, 0.0
+    # Only quarters whose three 5-minute rows are complete; the newest row is skipped (recorder commit lag).
+    data_end = max(starts)
+    f_sum = a_sum = wf = wa = 0.0
+    for t, f in zip(_quarters(today), today_values):
+        q = int(t.timestamp())
+        if q + 900 > data_end:
+            break
+        a = act.get(q, 0.0)
+        w = 0.5 ** ((now.timestamp() - q - 900) / 3600 / SNOW_HALF_LIFE_H)
+        f_sum += f
+        a_sum += a
+        wf += w * f
+        wa += w * a
+    if f_sum < SNOW_MIN_FC_KWH or wf < SNOW_MIN_WFC_KWH:
+        return None, f_sum, a_sum
+    return min(1.0, max(0.0, wa / wf)), f_sum, a_sum
+
+
+def _snow(attrs):
+    """Scale the chosen PV forecast for snow on the panels (in place). Below SNOW_TEMP outdoor, today's factor is the
+    measured ratio (_snow_ratio); before enough of today has passed, the last measured factor (up to SNOW_CARRY_H
+    old). Tomorrow and the day after get the same factor when their forecast mean temperature is below SNOW_TEMP too.
+    At or above SNOW_TEMP, or when switched off, nothing is scaled and the carried factor is cleared.
+    Returns the remaining kWh of today."""
+    now = dt_util.now()
+    today = now.date()
+    st = _attrs(SNOW_STATE)
+    by_day = dict(st.get("min_by_day") or {})
+    carried, carried_at = st.get("factor"), _parse_local(st.get("measured_at"))
+    temp, thr = _num(OUTDOOR_TEMP), _num(SNOW_TEMP, 3.0)
+    try:
+        enabled = state.get(SNOW_ON) == "on"
+    except NameError:
+        enabled = False
+    factor, active, note = 1.0, False, None
+    measured = None
+    if not enabled:
+        note = "off"
+    elif temp is None:
+        note = "no outdoor temperature"
+    elif temp >= thr:
+        note = f"outdoor {temp:.1f} °C >= {thr:.1f} °C"
+        carried, carried_at = 1.0, None
+    else:
+        active = True
+        try:
+            ratio, f_sum, a_sum = _snow_ratio(attrs["today"])
+        except Exception as err:  # statistics unavailable: never block the forecast update
+            log.warning(f"ess_forecast: snow ratio failed: {err}")
+            ratio = None
+        if ratio is not None:
+            factor, measured = ratio, now
+            note = f"measured today: {a_sum:.2f} of {f_sum:.2f} kWh forecast so far (recent hours weighted)"
+            carried, carried_at = ratio, now
+        elif carried is not None and carried_at is not None and (now - carried_at).total_seconds() < SNOW_CARRY_H * 3600:
+            factor = float(carried)
+            note = f"carried from {carried_at.strftime('%a %H:%M')} (too little forecast so far today to measure)"
+        else:
+            note = "no measurement yet"
+    temps = _attrs("sensor.ess_load_forecast")
+    day_f = {}
+    for name, offset in DAYS:
+        if offset == 0:
+            day_f[name] = factor
+            continue
+        t = temps.get(f"{name}_temp_c")
+        t = temp if t is None else t
+        day_f[name] = factor if (active and t is not None and t < thr) else 1.0
+    for name, offset in DAYS:
+        f = day_f[name]
+        attrs[f"{name}_snow_factor"] = round(f, 3)
+        if f < 0.999:
+            values = [round(v * f, 4) for v in attrs[name]]
+            attrs[name] = values
+            attrs[f"{name}_kwh"] = round(sum(values), 2)
+    attrs["snow"] = {"active": active, "factor": round(factor, 3), "note": note, "outdoor_c": temp, "threshold_c": thr}
+    if measured is not None:  # only measured factors mark a snow day (a carried morning value may be stale)
+        key = today.isoformat()
+        by_day[key] = round(min(by_day.get(key, 1.0), factor), 3)
+    keep = (today - dt.timedelta(days=120)).isoformat()
+    by_day = {k: v for k, v in by_day.items() if k >= keep}
+    state.set(SNOW_STATE, round(factor, 3), {"factor": round(float(carried), 3) if carried is not None else 1.0,
+                                             "measured_at": carried_at.isoformat() if carried_at else None,
+                                             "last_measured": measured.isoformat() if measured else st.get("last_measured"),
+                                             "min_by_day": by_day})
+    return sum([v for t, v in zip(_quarters(today), attrs["today"]) if t + QUARTER > now])
+
+
+def _parse_local(text):
+    if not text:
+        return None
+    try:
+        return dt_util.parse_datetime(text)
+    except (TypeError, ValueError):
+        return None
 
 
 def _update_pv():
@@ -366,7 +502,8 @@ def _update_pv():
     attrs = dict(chosen[1])
     if want_om and om is None:
         attrs["source"] = "VRM (Open-Meteo unavailable)"
-    state.set("sensor.ess_pv_forecast", round(chosen[0], 2), attrs)
+    remaining = _snow(attrs)
+    state.set("sensor.ess_pv_forecast", round(remaining, 2), attrs)
     return attrs["raw_today_kwh"]
 
 
@@ -471,7 +608,7 @@ def _evaluate(hours, profile, today_h=None):
         pv_act = sum([(r.get("change") or 0.0) for r in rows.get(PV_ENERGY, [])])
         act, act_h = load_actual(yesterday)
         days.append({"date": key, "backtest": False, "pv_fc_raw": s.get("pv_fc_raw"), "pv_fc": s.get("pv_fc"),
-                     "clearness": s.get("clearness"), "source": s.get("source"),
+                     "clearness": s.get("clearness"), "source": s.get("source"), "snow": key in _snow_days(),
                      "pv_act": round(pv_act, 1), "load_fc": s.get("load_fc"),
                      "load_act": round(act, 1) if act is not None else None,
                      "load_mae_w": mae(s.get("load_hourly_w") or [], act_h or [])})
@@ -565,6 +702,15 @@ def ess_forecast_update():
     hours, profile, today_h = _update_load()
     _evaluate(hours, profile, today_h)
     _publish_ev_learning()
+
+
+@time_trigger("cron(0,15,30,45 * * * *)")
+@state_trigger(SNOW_ON, SNOW_TEMP)
+def ess_pv_refresh():
+    """PV forecast only, every quarter just before the optimizer (:01/:16/:31/:46), so the snow factor follows the
+    day's production; also when the snow helpers change."""
+    task.unique("ess_pv_refresh")
+    _update_pv()
 
 
 @state_trigger("input_select.ess_pv_source",

@@ -266,6 +266,14 @@ input_number:
     mode: box
     unit_of_measurement: öre/kWh
     icon: mdi:clock-alert-outline
+  ess_pv_snow_temp:
+    name: ESS PV snow temp
+    min: -5.0
+    max: 10.0
+    step: 0.5
+    mode: slider
+    unit_of_measurement: °C
+    icon: mdi:snowflake-thermometer
   ess_pv_sunny_threshold:
     name: ESS PV sunny threshold
     min: 20.0
@@ -391,6 +399,9 @@ input_boolean:
   ess_measured_efficiency:
     name: ESS measured efficiency
     icon: mdi:chart-bell-curve-cumulative
+  ess_pv_snow_compensation:
+    name: ESS PV snow compensation
+    icon: mdi:snowflake-alert
 input_select:
   ess_ev_mode:
     name: ESS EV mode
