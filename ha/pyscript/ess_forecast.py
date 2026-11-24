@@ -44,15 +44,18 @@ DAYS = (("today", 0), ("tomorrow", 1), ("day_after", 2))
 HISTORY = "pyscript.ess_forecast_history"
 # Snow compensation (owner, 2026-11-21): a thin snow layer cut production to 15-25 % of the forecast on 2026-11-19..21
 # while the forecasts saw clear sky. Below SNOW_TEMP (outdoor) the forecast in use is scaled by the measured ratio
-# actual / forecast of today's elapsed quarters, weighted towards the last hours so it follows the snow sliding off.
+# actual / forecast over the last SNOW_WINDOW_H of today's elapsed quarters, so it follows the snow sliding off.
+# 2026-11-24: was all elapsed quarters weighted 0.5 ** (age / 2 h); weighting by forecast energy let the bright morning
+# dominate, so the factor recovered slowly after the snow slid off (21 Nov: 0.40 at dusk although clean since 13:00),
+# and that stale value was carried into a clean Sunday (forecast 3.5 vs 7.3 kWh actual).
 SNOW_ON = "input_boolean.ess_pv_snow_compensation"
 SNOW_TEMP = "input_number.ess_pv_snow_temp"
-SNOW_STATE = "pyscript.ess_pv_snow"  # last measured factor, and the lowest applied factor per day (snow days)
-SNOW_HALF_LIFE_H = 2.0  # recency weighting of the elapsed quarters
+SNOW_STATE = "pyscript.ess_pv_snow"  # last measured factor, and actual / forecast per day (day_ratio: snow days)
+SNOW_WINDOW_H = 2.0  # trailing window of complete quarters the factor is measured over
 SNOW_MIN_FC_KWH = 0.5  # forecast energy in today's elapsed quarters before today's own ratio is trusted
-SNOW_MIN_WFC_KWH = 0.2  # the same, recency weighted (the evening has no recent forecast to compare with)
+SNOW_MIN_WFC_KWH = 0.3  # forecast energy the window must hold; it is extended back until it does (evening, dull days)
 SNOW_CARRY_H = 36  # a measured factor is carried into the next morning (and a cold day after) for this long
-SNOW_DAY_FLAG = 0.85  # a day whose applied factor went below this is a snow day: skipped by the VRM bias learning
+SNOW_DAY_FLAG = 0.85  # a day whose actual / forecast stayed below this is a snow day: skipped by the VRM bias learning
 EV_LEARN = "pyscript.ess_ev_learning"
 PROFILE_DAYS = 14  # workday profile: workdays of the last 14 days
 HALF_LIFE_DAYS = 4
@@ -72,7 +75,13 @@ state.persist(HISTORY, default_value="0", default_attributes={"days": [], "snaps
 state.persist(EV_LEARN, default_value="0", default_attributes={"sessions": EV_SEED})
 # Seeded with the snow days before this existed (measured day ratios), so they stay out of the bias learning.
 state.persist(SNOW_STATE, default_value="1.0", default_attributes={
-    "factor": 1.0, "measured_at": None, "min_by_day": {"2026-11-19": 0.21, "2026-11-20": 0.17, "2026-11-21": 0.2}})
+    "factor": 1.0, "measured_at": None, "day_ratio": {"2026-11-19": 0.21, "2026-11-20": 0.17, "2026-11-21": 0.27}})
+
+
+def _day_ratios():
+    """{ISO date: actual / forecast of that day}; 'min_by_day' is the name used until 2026-11-24."""
+    st = _attrs(SNOW_STATE)
+    return dict(st.get("day_ratio") or st.get("min_by_day") or {})
 
 
 def _num(entity, default=None):
@@ -299,9 +308,8 @@ def _sun_weight(clearness):
 
 
 def _snow_days():
-    """Dates (ISO) whose applied snow factor went below SNOW_DAY_FLAG."""
-    by_day = _attrs(SNOW_STATE).get("min_by_day") or {}
-    return [k for k, v in by_day.items() if v is not None and v < SNOW_DAY_FLAG]
+    """Dates (ISO) whose actual / forecast stayed below SNOW_DAY_FLAG."""
+    return [k for k, v in _day_ratios().items() if v is not None and v < SNOW_DAY_FLAG]
 
 
 def _pv_bias(days, ref):
@@ -309,7 +317,7 @@ def _pv_bias(days, ref):
     ones, so a mixed average is wrong on both). Snow days are skipped: their low production is not a VRM error."""
     snow = _snow_days()
     sunny = [d for d in days if d.get("pv_act") is not None and (d.get("pv_fc_raw") or 0) > 1
-             and not d.get("snow") and d.get("date") not in snow
+             and d.get("date") not in snow  # current flags only: a day can be cleared after it was scored
              and _sun_weight(d.get("clearness") or d["pv_fc_raw"] / ref) >= 1.0][-7:]
     if len(sunny) < 3:
         return 1.0, len(sunny)
@@ -344,8 +352,9 @@ def _pv_attrs(raws, source, bias, bias_days, ref, factor):
 
 
 def _snow_ratio(today_values):
-    """(ratio, forecast kWh, actual kWh) over today's elapsed quarters: measured production / forecast, each quarter
-    weighted 0.5 ** (age / SNOW_HALF_LIFE_H). Ratio None while there is too little forecast energy to judge."""
+    """(ratio, forecast kWh, actual kWh): ratio = measured production / forecast over the last SNOW_WINDOW_H of
+    complete quarters, extended back until the window holds SNOW_MIN_WFC_KWH of forecast; the kWh are all of today's
+    elapsed quarters (the day ratio). Ratio None while today's elapsed forecast is below SNOW_MIN_FC_KWH."""
     now = dt_util.now()
     today = now.date()
     rows = _statistics([PV_ENERGY], _midnight(today), now, {"change"}, "5minute")
@@ -360,19 +369,24 @@ def _snow_ratio(today_values):
         return None, 0.0, 0.0
     # Only quarters whose three 5-minute rows are complete; the newest row is skipped (recorder commit lag).
     data_end = max(starts)
-    f_sum = a_sum = wf = wa = 0.0
+    done = []
     for t, f in zip(_quarters(today), today_values):
         q = int(t.timestamp())
         if q + 900 > data_end:
             break
-        a = act.get(q, 0.0)
-        w = 0.5 ** ((now.timestamp() - q - 900) / 3600 / SNOW_HALF_LIFE_H)
-        f_sum += f
-        a_sum += a
-        wf += w * f
-        wa += w * a
-    if f_sum < SNOW_MIN_FC_KWH or wf < SNOW_MIN_WFC_KWH:
+        done.append((f, act.get(q, 0.0)))
+    f_sum = sum([f for f, a in done])
+    a_sum = sum([a for f, a in done])
+    if f_sum < SNOW_MIN_FC_KWH:
         return None, f_sum, a_sum
+    wf = wa = 0.0
+    n = 0
+    for f, a in reversed(done):
+        wf += f
+        wa += a
+        n += 1
+        if n >= SNOW_WINDOW_H * 4 and wf >= SNOW_MIN_WFC_KWH:
+            break
     return min(1.0, max(0.0, wa / wf)), f_sum, a_sum
 
 
@@ -385,7 +399,7 @@ def _snow(attrs):
     now = dt_util.now()
     today = now.date()
     st = _attrs(SNOW_STATE)
-    by_day = dict(st.get("min_by_day") or {})
+    by_day = _day_ratios()
     carried, carried_at = st.get("factor"), _parse_local(st.get("measured_at"))
     temp, thr = _num(OUTDOOR_TEMP), _num(SNOW_TEMP, 3.0)
     try:
@@ -409,8 +423,11 @@ def _snow(attrs):
             log.warning(f"ess_forecast: snow ratio failed: {err}")
             ratio = None
         if ratio is not None:
+            if ratio >= SNOW_DAY_FLAG:  # within ordinary forecast error (e.g. dull late afternoon): not snow
+                ratio = 1.0
             factor, measured = ratio, now
-            note = f"measured today: {a_sum:.2f} of {f_sum:.2f} kWh forecast so far (recent hours weighted)"
+            note = (f"measured over the last {SNOW_WINDOW_H:.0f} h of sun; today so far {a_sum:.2f} of "
+                    f"{f_sum:.2f} kWh forecast")
             carried, carried_at = ratio, now
         elif carried is not None and carried_at is not None and (now - carried_at).total_seconds() < SNOW_CARRY_H * 3600:
             factor = float(carried)
@@ -434,15 +451,14 @@ def _snow(attrs):
             attrs[name] = values
             attrs[f"{name}_kwh"] = round(sum(values), 2)
     attrs["snow"] = {"active": active, "factor": round(factor, 3), "note": note, "outdoor_c": temp, "threshold_c": thr}
-    if measured is not None:  # only measured factors mark a snow day (a carried morning value may be stale)
-        key = today.isoformat()
-        by_day[key] = round(min(by_day.get(key, 1.0), factor), 3)
+    if measured is not None:  # the day's own ratio so far; the last one of the evening covers the whole day
+        by_day[today.isoformat()] = round(min(1.0, a_sum / f_sum), 3)
     keep = (today - dt.timedelta(days=120)).isoformat()
     by_day = {k: v for k, v in by_day.items() if k >= keep}
     state.set(SNOW_STATE, round(factor, 3), {"factor": round(float(carried), 3) if carried is not None else 1.0,
                                              "measured_at": carried_at.isoformat() if carried_at else None,
                                              "last_measured": measured.isoformat() if measured else st.get("last_measured"),
-                                             "min_by_day": by_day})
+                                             "day_ratio": by_day})
     return sum([v for t, v in zip(_quarters(today), attrs["today"]) if t + QUARTER > now])
 
 
